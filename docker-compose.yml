@@ -22,11 +22,20 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INSIDE:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
     restart: always
 
-#  java:
-#    build: .
+
+
+# === EL FIN DE SEMANA DESCOMENTAMOS ESTAS LÍNEAS PARA PRODUCCIÓN ===
+
+#  scraper-producer:
+#    build: ./javaproducer
 #    container_name: scraper-javaproducer
 #    ports:
 #      - "8080:8080"
@@ -34,5 +43,17 @@ services:
 #      - redis
 #      - kafka
 #    environment:
-#      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094 # Permite que Java vea a Kafka dentro de Docker
+#      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
+#    restart: always
+
+#  data-processor:
+#    build: ./data-processor
+#    container_name: scraper-dataproccesor
+#    ports:
+#      - "8081:8081"
+#    depends_on:
+#      - redis
+#      - kafka
+#    environment:
+#      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094
 #    restart: always
