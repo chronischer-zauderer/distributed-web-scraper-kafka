@@ -15,7 +15,6 @@ public class ScraperController {
 
     @PostMapping
     public ResponseEntity<String> executeScraping(@RequestBody ScrapeRequest request) {
-        // Delegacion directa a la capa de servicio
         String result = scraperService.processUrl(request.getUrl());
         return ResponseEntity.ok(result);
     }

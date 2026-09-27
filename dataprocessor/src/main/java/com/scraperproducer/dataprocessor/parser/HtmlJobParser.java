@@ -35,6 +35,7 @@ public class HtmlJobParser {
         String company = firstText(document, "[itemprop=hiringOrganization]", ".company", ".company-name", "[class*=company]");
         String location = firstText(document, "[itemprop=jobLocation]", ".location", ".job-location", "[class*=location]");
         String visibleText = document.body() == null ? document.text() : document.body().text();
+        // Restrict salary extraction to explicit fields; job pages often contain unrelated salary cards.
         Double salary = parseSalary(firstText(document, "[itemprop=baseSalary]", ".salary", ".job-salary"));
         List<String> technologies = extractTechnologies(document, visibleText);
 

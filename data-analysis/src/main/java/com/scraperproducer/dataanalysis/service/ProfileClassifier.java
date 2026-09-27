@@ -33,6 +33,7 @@ public class ProfileClassifier {
         if (frontend && !backend) {
             return "FRONTEND";
         }
+        // Mixed or technology-free offers stay OTHER instead of being counted twice.
         return "OTHER";
     }
 }

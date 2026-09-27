@@ -32,6 +32,7 @@ public class DataExtractionService {
     public void extractMarketData(String url, String htmlContent) {
         log.info("[PROCESSOR] Procesando oferta recibida desde {}", url);
         JobOfferDto dto = htmlJobParser.parse(htmlContent, url);
+        // The same identity lets Kafka retries update one offer instead of inserting it again.
         String dedupeKey = buildDedupeKey(dto);
         JobOffer offer = jobOfferRepository.findFirstByDedupeKey(dedupeKey).orElseGet(JobOffer::new);
 
@@ -63,6 +64,7 @@ public class DataExtractionService {
 
     private void publishEvent(MarketAnalyticsEvent event, String key) {
         final String jsonPayload;
+        // Wait for Kafka confirmation so a failed publication rolls back this database transaction.
         try {
             jsonPayload = objectMapper.writeValueAsString(event);
         } catch (JsonProcessingException exception) {

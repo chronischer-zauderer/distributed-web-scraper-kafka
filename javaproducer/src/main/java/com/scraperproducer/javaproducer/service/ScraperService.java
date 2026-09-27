@@ -21,7 +21,7 @@ public class ScraperService {
     private final RestClient restClient = RestClient.create();
 
     public String processUrl(String url) {
-        // 1. Capa de Caché (Redis Check)
+        // Cache-Aside: a hit avoids both the external request and a duplicate Kafka event.
         Optional<String> cachedHtml = cacheService.get(url);
         if (cachedHtml.isPresent()) {
             log.info("[CACHE HIT] Retornando HTML directamente desde la Cache");
@@ -34,7 +34,7 @@ public class ScraperService {
         // 3. Persistencia rapida en Cache
         cacheService.put(url, cleanedHtml);
 
-        // 4. Publicacion asincrona del evento
+        // Use the source URL as the Kafka key so events from one source stay partition-affine.
         htmlPublisher.publishRawHtml(url, cleanedHtml);
 
         return cleanedHtml;

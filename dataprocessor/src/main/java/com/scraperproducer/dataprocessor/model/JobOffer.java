@@ -14,19 +14,19 @@ public class JobOffer {
     private Long id;
 
     @Column(nullable = false)
-    private String title;          // Ej: "Backend Developer Java"
+    private String title;
 
-    private String company;        // Ej: "Perficient"
+    private String company;
 
-    private Double salary;         // Rango numérico limpio para estadísticas
+    private Double salary;
 
     @Column(name = "required_skills")
-    private String requiredSkills; // Tecnologías concatenadas (Ej: "Java, Spring, SQL")
+    private String requiredSkills;
 
     private String location;
 
     @Column(name = "source_url", length = 1024)
-    private String sourceUrl;      // URL de auditoría
+    private String sourceUrl;
 
     @Column(name = "dedupe_key", unique = true, length = 64)
     private String dedupeKey;
