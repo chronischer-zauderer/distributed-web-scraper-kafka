@@ -43,6 +43,7 @@ public class KafkaConfig {
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
         ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory());
+        // Bound retries so malformed events do not stop all later analytics records.
         factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(1000L, 2L)));
         return factory;
     }
@@ -53,6 +54,7 @@ public class KafkaConfig {
         properties.put("bootstrap.servers", bootstrapServers);
         properties.put("key.serializer", StringSerializer.class);
         properties.put("value.serializer", StringSerializer.class);
+        // The dashboard event is acknowledged only after Kafka confirms this send.
         properties.put("enable.idempotence", true);
         return new DefaultKafkaProducerFactory<>(properties);
     }

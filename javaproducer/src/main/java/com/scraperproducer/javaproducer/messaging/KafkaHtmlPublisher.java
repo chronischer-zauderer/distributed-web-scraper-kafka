@@ -20,6 +20,7 @@ public class KafkaHtmlPublisher implements HtmlPublisher {
 
         try {
 
+            // The URL key preserves source identity for the downstream deduplication step.
             kafkaTemplate.send("raw-html", url, htmlContent)
                     .whenComplete((result, ex) -> {
                         if (ex == null) {

@@ -24,7 +24,7 @@ public class RedisCacheService implements CacheService {
         try {
             log.info("[REDIS] Buscando en caché la URL: {}", key);
 
-            // opsForValue() le indica a Spring que vamos a ejecutar comandos para strings simples (Comando GET de Redis).
+            // A cache outage must not prevent the scraper from serving fresh data.
             String cachedValue = redisTemplate.opsForValue().get(key);
 
             if (cachedValue != null) {

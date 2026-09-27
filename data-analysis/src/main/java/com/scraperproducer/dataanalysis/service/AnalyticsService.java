@@ -35,8 +35,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AnalyticsService {
 
-    private static final List<String> PERIOD_TYPES = List.of("DAILY", "WEEKLY", "MONTHLY");
-
     private final TechnologyMetricRepository technologyMetricRepository;
     private final ProfileMetricRepository profileMetricRepository;
     private final ProcessedAnalyticsEventRepository processedEventRepository;
@@ -48,11 +46,13 @@ public class AnalyticsService {
     public void process(MarketAnalyticsEvent event) {
         validate(event);
         if (processedEventRepository.existsByJobId(event.jobId())) {
+            // Kafka redelivery must not increment demand or salary aggregates twice.
             log.info("[ANALYSIS] Evento duplicado ignorado: jobId={}", event.jobId());
             return;
         }
 
         LocalDate extractionDate = event.scrapedAt() == null ? LocalDate.now() : event.scrapedAt().toLocalDate();
+        // Store the same event in three independent calendar windows for simple dashboard queries.
         Map<String, LocalDate> periods = periodStarts(extractionDate);
         List<String> technologies = normalizeTechnologies(event.technologies());
         String profile = profileClassifier.classify(technologies);
@@ -137,6 +137,7 @@ public class AnalyticsService {
     }
 
     private void publishDashboardSnapshot(Map<String, LocalDate> periods) {
+        // Publish a self-contained snapshot so the future dashboard does not recalculate metrics.
         List<AnalyticsPeriodSnapshot> snapshots = periods.entrySet().stream()
                 .map(period -> snapshot(period.getKey(), period.getValue()))
                 .toList();
