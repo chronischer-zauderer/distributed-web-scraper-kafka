@@ -1,6 +1,17 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: scraper-postgres
+    environment:
+      POSTGRES_DB: market_db
+      POSTGRES_USER: univalle_user
+      POSTGRES_PASSWORD: univalle_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: always
+
   redis:
     image: redis:7-alpine
     container_name: scraper-redis
@@ -22,17 +33,58 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INSIDE:PLAINTEXT
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
     restart: always
 
-#  java:
-#    build: .
-#    container_name: scraper-javaproducer
-#    ports:
-#      - "8080:8080"
-#    depends_on:
-#      - redis
-#      - kafka
-#    environment:
-#      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9094 # Permite que Java vea a Kafka dentro de Docker
-#    restart: always
+
+
+  scraper-producer:
+    build: ./javaproducer
+    container_name: scraper-javaproducer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - kafka
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9094
+      SPRING_DATA_REDIS_HOST: redis
+    restart: always
+
+  data-processor:
+    build: ./dataprocessor
+    container_name: scraper-dataprocessor
+    ports:
+      - "8081:8081"
+    depends_on:
+      - postgres
+      - kafka
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9094
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/market_db
+      SPRING_DATASOURCE_USERNAME: univalle_user
+      SPRING_DATASOURCE_PASSWORD: univalle_password
+    restart: always
+
+  data-analysis:
+    build: ./data-analysis
+    container_name: scraper-data-analysis
+    ports:
+      - "8082:8082"
+    depends_on:
+      - postgres
+      - kafka
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9094
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/market_db
+      SPRING_DATASOURCE_USERNAME: univalle_user
+      SPRING_DATASOURCE_PASSWORD: univalle_password
+    restart: always
+
+volumes:
+  postgres-data:
