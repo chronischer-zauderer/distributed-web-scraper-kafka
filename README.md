@@ -1,231 +1,151 @@
-# Distributed Web Scraper Kafka
+# Distributed Web Scraper and Market Analytics
 
-A distributed platform for capturing HTML from web sources, extracting job-offer information, and calculating labor-market metrics through Kafka events.
+A distributed pipeline that ingests HTML, parses job offers, normalizes data, computes demand analytics, and presents them on a unified Next.js dashboard.
 
-The project follows an Event-Driven Architecture (EDA): each microservice has a focused responsibility and communicates through Kafka topics rather than direct service-to-service calls.
+The project implements four Spring Boot microservices and one Next.js frontend communicating via Kafka events and REST.
 
-## Arquitectura
+## Problem Statement
+- **Asynchronous Analytics Extraction**: Processes job offers from web portals and extracts valuable insights (salaries, most in-demand technologies, and required profiles) without blocking the ingestion flow.
+- **High Availability & Resilience**: Uses an event-driven architecture (Kafka) to decouple components. If a service goes down, messages are retained without data loss, enabling fault tolerance.
+- **Read Optimization**: Analytics computation (write-heavy) happens in streaming fashion as events arrive, packaging pre-consolidated snapshots that are pushed to the dashboard. This allows the frontend to consume real-time statistics (read-heavy) extremely fast without overloading the database with complex SQL queries on every refresh.
 
-```mermaid
-flowchart LR
-		A[scraper-producer\nREST + scraping] -->|raw-html| B[data-processor\nJsoup + JPA]
-		B --> C[(PostgreSQL\njob_offers)]
-		B -->|market-analytics| D[data-analysis\nanalytics]
-		D --> E[(PostgreSQL\nmetric tables)]
-		D -->|analytics-dashboard| F[Future dashboard]
-```
-
-The dashboard and the fourth microservice are not part of this repository yet.
+## Business Rules
+- **Idempotency & Deduplication**:
+  - **Scraping**: Processed URLs are cached in Redis for 1 hour to prevent retries and avoid abusing the source portal's bandwidth.
+  - **Unique Identity**: Each processed offer receives a `dedupe_key` (based on the URL or offer attributes).
+  - **Analytics**: Events processed by the analytics engine are tracked; if a duplicate or redelivered Kafka event arrives, it is ignored by its `jobId`, preventing counters from being erroneously incremented.
+- **Role Classification**: Job offers are automatically categorized as `FRONTEND`, `BACKEND`, or `OTHER` depending on the technology stack listed in the offer.
+- **Evaluation Periods**: Technology demand and role analytics are computed simultaneously across 3 independent intervals: **Daily**, **Weekly**, and **Monthly**.
+- **Failure Resilience**: HTTP calls to the scraper include a *Circuit Breaker* pattern (Resilience4j). Read or write failures do not crash the pipeline; database transactions are tied to Kafka acknowledgment.
 
 ## Microservices
 
 ### `scraper-producer`
-
 Exposes `POST /api/v1/scrape`, downloads a URL, removes unwanted HTML elements with Jsoup, and publishes the cleaned HTML to `raw-html`.
-
-- Uses Redis with the Cache-Aside pattern and a one-hour TTL.
-- Uses the URL as the Kafka key.
+- Uses Redis with the Cache-Aside pattern.
 - Protects the HTTP request with a Resilience4j Circuit Breaker.
-- Uses Spring Boot, Spring Kafka, Spring Data Redis, and Jsoup.
-
-When the URL is cached, the service returns the stored HTML and does not publish another event.
 
 ### `data-processor`
-
-Consumes `raw-html` as `ConsumerRecord<String, String>` to preserve the URL from the Kafka key.
-
-- Parses HTML with Jsoup.
-- Extracts the title, company, salary, technologies, location, and extraction date.
-- Normalizes technologies and salary ranges when available.
-- Generates a SHA-256 `dedupe_key`.
+Consumes `raw-html` and extracts title, company, salary, technologies, and location.
 - Persists the offer in the `job_offers` table.
 - Publishes a compact JSON event to `market-analytics`.
-- Waits for Kafka confirmation within the persistence transaction.
 
 ### `data-analysis`
-
 Consumes `market-analytics` and maintains its own metrics in PostgreSQL.
-
-- Calculates daily, weekly, and monthly metrics.
-- Calculates average salary by technology.
-- Produces a top-five ranking of the highest-paid technologies.
-- Calculates technology demand.
-- Classifies offers as `BACKEND`, `FRONTEND`, or `OTHER`.
-- Ignores duplicate events using `jobId`.
+- Calculates daily, weekly, and monthly metrics, average salaries, and top-paid technologies.
 - Publishes complete snapshots to `analytics-dashboard`.
 
-It does not expose a REST endpoint or implement the dashboard.
+### `analytics-dashboard`
+Consumes `analytics-dashboard` and maintains the latest snapshot in the database.
+- Provides a REST endpoint `GET /api/v1/dashboard`.
+- Designed to feed the React frontend directly.
+
+### `dashboard-frontend`
+Next.js React frontend that visualizes the snapshots generated by the backend.
+- Displays market demand, salary insights, and profile breakdowns in a user-friendly UI.
 
 ## Technologies
+- **Backend**: Java 17, Spring Boot, Spring Kafka, Spring Data JPA
+- **Frontend**: Next.js 14, React, Tailwind CSS
+- **Infrastructure**: Apache Kafka 3.7.0, PostgreSQL 16, Redis 7, Docker Compose
 
-| Technology | Use |
-|---|---|
-| Java 17 | Primary language |
-| Spring Boot 4.1.0 | Microservice applications and configuration |
-| Spring Kafka | Kafka producers and consumers |
-| Apache Kafka 3.7.0 | Event backbone |
-| PostgreSQL 16 | Relational persistence |
-| Spring Data JPA / Hibernate | Object-relational mapping and data access |
-| Redis 7 | Scraper cache |
-| Jsoup 1.17.2 | HTML parsing and cleanup |
-| Resilience4j 2.2.0 | Producer Circuit Breaker |
-| Docker Compose | Infrastructure and local execution |
-| Jackson | JSON event serialization |
+## Architecture & Data Flow
 
-## Data flow
+```text
+┌──────────────────────┐
+│ scraper-producer     │
+└──────────┬───────────┘
+           │ raw-html
+           ▼
+        Kafka
+           │
+           ▼
+┌──────────────────────┐
+│ data-processor       │
+└──────────┬───────────┘
+           │ market-analytics
+           ▼
+        Kafka
+           │
+           ▼
+┌──────────────────────┐
+│ data-analysis        │
+└──────────┬───────────┘
+           │ analytics-dashboard
+           ▼
+analytics-dashboard
+           │
+           ▼
+     REST API (GET /api/v1/dashboard)
+           │
+           ▼
+┌──────────────────────┐
+│ Frontend existente   │
+└──────────────────────┘
+```
 
-1. The client sends a URL to `scraper-producer`.
-2. The producer checks Redis for the URL.
-3. If there is no cache entry, it downloads and cleans the HTML.
-4. It publishes the URL as the key and the HTML as the value in `raw-html`.
-5. `data-processor` consumes the event and extracts the offer.
-6. It generates the `dedupe_key` and stores the offer in `job_offers`.
-7. It publishes the normalized offer to `market-analytics`.
-8. `data-analysis` updates demand, salary, and profile metrics.
-9. It persists metrics for each time period.
-10. It publishes a self-contained snapshot to `analytics-dashboard`.
-
-## Topics Kafka
-
-| Topic | Producer | Consumer | Content |
-|---|---|---|---|
-| `raw-html` | `scraper-producer` | `data-processor` | URL key and cleaned HTML value |
-| `market-analytics` | `data-processor` | `data-analysis` | Normalized offer as JSON |
-| `analytics-dashboard` | `data-analysis` | Future dashboard | JSON metrics snapshot |
-
-The URL is used as the key in `raw-html` and as the normalized event key when available. Kafka preserves ordering within a partition. The processor uses `dedupe_key`; analysis uses `jobId` and the `processed_analytics_events` table.
-
-## Persistence
-
-The services use the same PostgreSQL instance from Compose, but keep separate tables by responsibility:
-
-| Table | Service | Purpose |
-|---|---|---|
-| `job_offers` | `data-processor` | Extracted and normalized offers |
-| `technology_metrics` | `data-analysis` | Technology demand, salary sums, counts, and averages |
-| `profile_metrics` | `data-analysis` | Backend, Frontend, and Other counts |
-| `processed_analytics_events` | `data-analysis` | Idempotency by `jobId` |
-
-## Resilience and idempotency
-
-- **Cache-Aside:** Redis avoids downloading the same URL again for one hour.
-- **Circuit Breaker:** the producer returns a fallback response when the external source fails repeatedly.
-- **Kafka retries:** processor and analysis retry twice with a one-second delay, then recover the record so one partition is not blocked indefinitely.
-- **Processor deduplication:** a URL produces a stable identity; without a URL, offer fields are combined and hashed with SHA-256.
-- **Processor transaction:** publication of `market-analytics` waits for confirmation. If it fails, the exception allows the input record to be retried.
-- **Analysis idempotency:** if `jobId` is already in `processed_analytics_events`, the event does not increment metrics again.
-
-## Running with Docker
-
-### Requirements
-
-- Docker Engine.
-- Docker Compose plugin.
-- Java 17 and Maven 3.9+ if builds will be run outside Docker.
+## Running with Docker Compose
 
 ### Start the stack
 
-From the repository root:
-
+Before running Docker Compose, ensure you build the Java projects:
 ```bash
-docker compose up -d --build
-docker compose ps
+mvn -f javaproducer/pom.xml clean package -DskipTests
+mvn -f dataprocessor/pom.xml clean package -DskipTests
+mvn -f data-analysis/pom.xml clean package -DskipTests
+mvn -f analytics-dashboard/backend/pom.xml clean package -DskipTests
 ```
 
-Exposed services:
+Then start the stack:
+```bash
+docker compose up -d --build
+```
 
-| Service | Port |
-|---|---:|
-| `scraper-producer` | `8080` |
-| `data-processor` | `8081` |
-| `data-analysis` | `8082` |
-| Kafka | `9092` |
-| PostgreSQL | `5433` |
-| Redis | `6379` |
+### Exposed Services & Ports
+- `scraper-producer`: 8080
+- `data-processor`: 8081
+- `analytics-dashboard`: 8082
+- `data-analysis`: 8083
+- `dashboard-frontend`: 3000
+- Kafka: 9092
+- PostgreSQL: 5433
+- Redis: 6379
 
-Inside Docker, applications use `kafka:9094`, `postgres:5432`, and `redis:6379`. From the local machine, properties use `localhost` and the published ports.
+### Environment Variables
+Key variables managed via docker-compose:
+- `SPRING_KAFKA_BOOTSTRAP_SERVERS`
+- `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
+- `APP_CORS_ALLOWED_ORIGINS` (Backend CORS restriction, set to http://localhost:3000)
+- `NEXT_PUBLIC_DASHBOARD_API_URL` (Frontend fetch URL, set to http://localhost:8082)
 
-### Test the producer
-
+## Validation Flow
+Submit a scraping request:
 ```bash
 curl -X POST http://localhost:8080/api/v1/scrape \
 	-H 'Content-Type: application/json' \
 	-d '{"url":"https://www.arbeitnow.com/jobs/companies/mayflower-gmbh/software-entwicklerin-mit-schwerpunkt-genai-wurzburg-80985"}'
 ```
+Then visit **http://localhost:3000** to see the extracted job data and market analytics update in real-time.
 
-Use a new URL to force a download. If the URL exists in Redis, the producer responds from cache and does not generate another Kafka event.
+## Integration Status & End-to-End Validation
 
-### Check services and topics
+The platform has been fully integrated end-to-end with the following configurations:
 
-```bash
-docker compose ps
-docker exec scraper-kafka /opt/kafka/bin/kafka-topics.sh \
-	--bootstrap-server localhost:9092 --list
-docker exec scraper-postgres psql -U univalle_user -d market_db -c '\dt'
-```
+1. **Micro 4 (`analytics-dashboard`)**:
+   - 100% compliant with the `AnalyticsDashboardEvent` contract produced by `data-analysis`.
+   - Properly exposes `GET /api/v1/dashboard` on port `8082`.
+   - CORS is configured natively via Spring using `APP_CORS_ALLOWED_ORIGINS`, allowing `http://localhost:3000`.
 
-### Stop the stack
+2. **Frontend Configuration**:
+   - The Next.js frontend uses client-side fetching (`'use client'`).
+   - `NEXT_PUBLIC_DASHBOARD_API_URL` is set to `http://localhost:8082`, mapping correctly from the user's browser to the exposed backend port on the host.
 
-```bash
-docker compose down
-```
+3. **Docker Compose Enhancements**:
+   - Added health checks for **PostgreSQL** (`pg_isready`) and the **dashboard backend** (`/actuator/health`).
+   - Microservices now strictly wait for infrastructure dependencies using `condition: service_healthy` or `service_started`, rather than basic `depends_on`.
+   - Ensures correct startup order and eliminates race conditions.
 
-The `postgres-data` volume is kept until `docker compose down -v` is explicitly run.
-
-## Tests and validation
-
-Run the tests from each module:
-
-```bash
-cd javaproducer && ./mvnw test
-cd ../dataprocessor && mvn clean test
-cd ../data-analysis && mvn clean test
-```
-
-The current tests cover:
-
-- producer: Spring context loading;
-- processor: parsing, missing fields, normalization, salary ranges, and publication failure handling;
-- analysis: profile classification, aggregation, idempotency, and compatibility with historical events.
-
-The end-to-end flow was also validated with a real Arbeitnow job source. The offer reached PostgreSQL, produced `market-analytics`, updated the metrics, and generated an `analytics-dashboard` snapshot. The same event was replayed and ignored by `jobId` without duplicating counts.
-
-## Project structure
-
-```text
-.
-├── javaproducer/
-│   ├── pom.xml
-│   └── src/
-├── dataprocessor/
-│   ├── pom.xml
-│   └── src/
-├── data-analysis/
-│   ├── pom.xml
-│   └── src/
-├── Docs/
-├── docker-compose.yml
-└── README.md
-```
-
-## Technical decisions
-
-- **Event-Driven Architecture:** Kafka decouples capture, processing, and analytics.
-- **Single responsibility:** each service transforms one data shape and publishes the next contract.
-- **Domain-separated persistence:** processor and analysis share a PostgreSQL instance, but not JPA entities or internal tables.
-- **Processing before analytics:** `data-processor` converts unstructured HTML into a small, stable event.
-- **Explicit idempotency:** Kafka redeliveries must not create repeated offers or metrics.
-- **Controlled complexity:** the project uses JPA, simple database aggregations, and deterministic rules; it does not introduce Spark, Kafka Streams, or ML.
-
-## Current scope
-
-Implemented:
-
-- `scraper-producer`;
-- `data-processor`;
-- `data-analysis`;
-- prepared `analytics-dashboard` topic.
-
-Intentionally pending:
-
-- final consumer and dashboard.
+4. **Testing & Validation**:
+   - All modules (`javaproducer`, `dataprocessor`, `data-analysis`, and `analytics-dashboard`) compile successfully via Maven.
+   - All existing tests pass flawlessly, preserving idempotency constraints and deduplication mechanisms.
+   - Scraping requests (like the `arbeitnow.com` example) successfully travel down the entire pipeline. Jsoup extracts the fields, `data-processor` normalizes it, `data-analysis` aggregates metrics and updates Postgres, and it immediately reflects via Kafka onto the REST API endpoint `GET /api/v1/dashboard`, which the frontend fetches on demand.

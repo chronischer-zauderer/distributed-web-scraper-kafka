@@ -189,3 +189,4 @@ build/
 Thumbs.db
 
 Docs/
+.codegraph/
